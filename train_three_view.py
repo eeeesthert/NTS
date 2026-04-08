@@ -5,7 +5,7 @@ import argparse
 import torch
 from torch.utils.data import DataLoader
 
-from abus_pairwise.datasets import ABUSThreeViewDataset
+from abus_pairwise.tri_datasets import ABUSThreeViewDataset
 from abus_pairwise.pipeline import TwoStageStitcher
 from abus_pairwise.three_view_pipeline import ThreeViewFixedCenterStitcher, ThreeViewLossWeights, compute_three_view_total_loss
 
