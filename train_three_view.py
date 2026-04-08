@@ -13,13 +13,22 @@ from abus_pairwise.three_view_pipeline import ThreeViewFixedCenterStitcher, Thre
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset-root", default="./dataset")
-    ap.add_argument("--checkpoint", default="./ckpt/ResNet50.pt", help="pairwise pretrained checkpoint")
+    ap.add_argument("--pairwise-checkpoint", default=None, help="optional pairwise checkpoint for warm start")
     ap.add_argument("--epochs", type=int, default=20)
     ap.add_argument("--batch-size", type=int, default=1)
     ap.add_argument("--image-size", type=int, default=0, help="<=0 means original size")
     ap.add_argument("--lr", type=float, default=1e-4)
     ap.add_argument("--cpu", action="store_true")
     ap.add_argument("--out-ckpt", default="./outputs_1/three_view_model.pt")
+    ap.add_argument(
+        "--encoder-pretrain-source",
+        choices=["imagenet", "radimagenet", "local", "none"],
+        default="local",
+        help="default local for finetuning from ./ckpt/ResNet50.pt",
+    )
+    ap.add_argument("--encoder-ckpt", default="./ckpt/ResNet50.pt")
+    ap.add_argument("--radimagenet-url", "--net-url", dest="radimagenet_url", default=None)
+    ap.add_argument("--encoder-strict-load", action="store_true")
     args = ap.parse_args()
 
     device = torch.device("cpu" if args.cpu or not torch.cuda.is_available() else "cuda")
@@ -30,8 +39,17 @@ def main() -> None:
         raise RuntimeError("No three-view samples found.")
     dl = DataLoader(ds, batch_size=args.batch_size, shuffle=True, num_workers=2)
 
-    pair = TwoStageStitcher().to(device)
-    pair.load_state_dict(torch.load(args.checkpoint, map_location=device), strict=True)
+    pair = TwoStageStitcher(
+        encoder_pretrain_source=args.encoder_pretrain_source,
+        encoder_ckpt=args.encoder_ckpt,
+        encoder_radimagenet_url=args.radimagenet_url,
+        encoder_strict_load=args.encoder_strict_load,
+    ).to(device)
+    if args.pairwise_checkpoint:
+        pair.load_state_dict(torch.load(args.pairwise_checkpoint, map_location=device), strict=True)
+        print(f"[3view] loaded pairwise warm start: {args.pairwise_checkpoint}")
+    else:
+        print(f"[3view] finetune backbone from encoder ckpt: {args.encoder_ckpt}")
     model = ThreeViewFixedCenterStitcher(pair).to(device)
 
     optim = torch.optim.Adam(model.parameters(), lr=args.lr)
