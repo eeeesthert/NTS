@@ -13,7 +13,7 @@ from abus_pairwise.three_view_pipeline import ThreeViewFixedCenterStitcher, Thre
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset-root", default="./dataset")
-    ap.add_argument("--checkpoint", default="./outputs_1/shared_model.pt", help="pairwise pretrained checkpoint")
+    ap.add_argument("--checkpoint", default="./ckpt/ResNet50.pt", help="pairwise pretrained checkpoint")
     ap.add_argument("--epochs", type=int, default=20)
     ap.add_argument("--batch-size", type=int, default=1)
     ap.add_argument("--image-size", type=int, default=0, help="<=0 means original size")
