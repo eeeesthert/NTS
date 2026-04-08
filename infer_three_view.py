@@ -93,11 +93,14 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset-root", default="./dataset/infer")
     ap.add_argument("--checkpoint", default="./outputs_1/three_view_model.pt")
-    ap.add_argument("--pairwise-checkpoint", default="./outputs_1/shared_model.pt")
     ap.add_argument("--out-dir", default="./infer_outputs_3view")
     ap.add_argument("--metrics-csv", default="./infer_outputs_3view/metrics.csv")
     ap.add_argument("--image-size", type=int, default=0, help="<=0 keeps original size")
     ap.add_argument("--cpu", action="store_true")
+    ap.add_argument("--encoder-pretrain-source", choices=["imagenet", "radimagenet", "local", "none"], default="local")
+    ap.add_argument("--encoder-ckpt", default="./ckpt/ResNet50.pt")
+    ap.add_argument("--radimagenet-url", "--net-url", dest="radimagenet_url", default=None)
+    ap.add_argument("--encoder-strict-load", action="store_true")
     args = ap.parse_args()
 
     device = torch.device("cpu" if args.cpu or not torch.cuda.is_available() else "cuda")
@@ -106,8 +109,12 @@ def main() -> None:
     ds = ABUSThreeViewDataset(args.dataset_root, image_size=img_size)
     dl = DataLoader(ds, batch_size=1, shuffle=False)
 
-    pair = TwoStageStitcher().to(device)
-    pair.load_state_dict(torch.load(args.pairwise_checkpoint, map_location=device), strict=True)
+    pair = TwoStageStitcher(
+        encoder_pretrain_source=args.encoder_pretrain_source,
+        encoder_ckpt=args.encoder_ckpt,
+        encoder_radimagenet_url=args.radimagenet_url,
+        encoder_strict_load=args.encoder_strict_load,
+    ).to(device)
     model = ThreeViewFixedCenterStitcher(pair).to(device)
     model.load_state_dict(torch.load(args.checkpoint, map_location=device), strict=True)
     model.eval()
