@@ -17,6 +17,14 @@ class PairSample:
     right_path: Path
 
 
+@dataclass
+class TripleSample:
+    case_dir: Path
+    input1_path: Path
+    input2_path: Path
+    input3_path: Path
+
+
 class ABUSPairDataset(Dataset):
     """
     Expects layout:
@@ -182,3 +190,84 @@ class ABUSPairDataset(Dataset):
             right = ((right - 0.5) * cscale + 0.5).clamp(0, 1)
 
         return left, right, left_x, right_x
+
+
+class ABUSThreeViewDataset(Dataset):
+    """
+    Expects layout:
+      dataset/case001/input1.jpg
+      dataset/case001/input2.jpg
+      dataset/case001/input3.jpg
+      dataset/case001/nipple_x.txt   # [x1,x2,x3]
+    or directory slices:
+      dataset/case001/input1/slice_xxx.jpg
+      dataset/case001/input2/slice_xxx.jpg
+      dataset/case001/input3/slice_xxx.jpg
+    """
+
+    def __init__(self, root: str | Path, image_size: int | None = 512):
+        self.root = Path(root)
+        self.image_size = image_size
+        self.samples = self._scan_cases()
+
+    def _load_img(self, p: Path) -> torch.Tensor:
+        img = cv2.imread(str(p), cv2.IMREAD_COLOR)
+        if img is None:
+            raise FileNotFoundError(p)
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        if self.image_size is not None and self.image_size > 0:
+            img = cv2.resize(img, (self.image_size, self.image_size), interpolation=cv2.INTER_LINEAR)
+        return torch.from_numpy(img).float().permute(2, 0, 1) / 255.0
+
+    @staticmethod
+    def _read_nipple_x(path: Path) -> List[float]:
+        raw = path.read_text(encoding="utf-8").strip().strip("[]")
+        vals = [float(x.strip()) for x in raw.split(",") if x.strip()]
+        if len(vals) != 3:
+            raise ValueError(f"nipple_x.txt must have 3 values: {path}")
+        return vals
+
+    def _scan_cases(self) -> List[TripleSample]:
+        samples: List[TripleSample] = []
+        exts = ("*.jpg", "*.jpeg", "*.png", "*.bmp")
+        for case_dir in sorted(self.root.glob("case*")):
+            if not (case_dir / "nipple_x.txt").exists():
+                continue
+
+            single_paths = [case_dir / f"input{i}.jpg" for i in (1, 2, 3)]
+            if all(p.exists() for p in single_paths):
+                samples.append(TripleSample(case_dir, single_paths[0], single_paths[1], single_paths[2]))
+                continue
+
+            view_maps: List[dict[str, Path]] = []
+            for i in (1, 2, 3):
+                files: List[Path] = []
+                for ext in exts:
+                    files.extend(sorted((case_dir / f"input{i}").glob(ext)))
+                view_maps.append({ABUSPairDataset._slice_stem_to_id(p.stem): p for p in files})
+            common_ids = sorted(set(view_maps[0]).intersection(view_maps[1]).intersection(view_maps[2]))
+            for sid in common_ids:
+                samples.append(TripleSample(case_dir, view_maps[0][sid], view_maps[1][sid], view_maps[2][sid]))
+        return samples
+
+    def __len__(self) -> int:
+        return len(self.samples)
+
+    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor | str]:
+        sample = self.samples[idx]
+        nipple_x = self._read_nipple_x(sample.case_dir / "nipple_x.txt")
+        input1 = self._load_img(sample.input1_path)
+        input2 = self._load_img(sample.input2_path)
+        input3 = self._load_img(sample.input3_path)
+        return {
+            "input1": input1,
+            "input2": input2,
+            "input3": input3,
+            "x1": torch.tensor([nipple_x[0]], dtype=torch.float32),
+            "x2": torch.tensor([nipple_x[1]], dtype=torch.float32),
+            "x3": torch.tensor([nipple_x[2]], dtype=torch.float32),
+            "case": sample.case_dir.name,
+            "input1_path": str(sample.input1_path),
+            "input2_path": str(sample.input2_path),
+            "input3_path": str(sample.input3_path),
+        }
