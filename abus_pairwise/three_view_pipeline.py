@@ -25,6 +25,12 @@ def _pad_to_width(x: torch.Tensor, width: int) -> torch.Tensor:
     return F.pad(x, (pad_left, pad_right, 0, 0), mode="constant", value=0.0)
 
 
+def _match_mask_size(mask: torch.Tensor, ref: torch.Tensor) -> torch.Tensor:
+    if mask.shape[-2:] == ref.shape[-2:]:
+        return mask
+    return F.interpolate(mask, size=ref.shape[-2:], mode="nearest")
+
+
 @dataclass
 class ThreeViewLossWeights:
     warp_l1: float = 1.0
@@ -69,6 +75,8 @@ class ThreeViewFixedCenterStitcher(torch.nn.Module):
         i2a = _pad_to_width(b12["right_warp"], target_w)
         i3 = _pad_to_width(b32["left_warp"], target_w)
         i2b = _pad_to_width(b32["right_warp"], target_w)
+        o12 = _pad_to_width(b12["overlap"], target_w)
+        o32 = _pad_to_width(b32["overlap"], target_w)
 
         fixed = 0.5 * (i2a + i2b)
         fus12 = self.pair_model.fusion_net(i1, fixed)
@@ -93,8 +101,8 @@ class ThreeViewFixedCenterStitcher(torch.nn.Module):
             "weights_3": w3,
             "seam_12": fus12["seam_soft"],
             "seam_32": fus32["seam_soft"],
-            "overlap_12": b12["overlap"],
-            "overlap_32": b32["overlap"],
+            "overlap_12": o12,
+            "overlap_32": o32,
             "overlap_13": overlap13,
             "control_disp_12": b12["control_disp"],
             "control_disp_32": b32["control_disp"],
@@ -111,10 +119,15 @@ def compute_three_view_total_loss(
 ) -> dict[str, torch.Tensor]:
     if w is None:
         w = ThreeViewLossWeights()
+    o12 = _match_mask_size(outputs["overlap_12"], outputs["input1_warp"])
+    o32 = _match_mask_size(outputs["overlap_32"], outputs["input3_warp"])
+    o13 = _match_mask_size(outputs["overlap_13"], outputs["input1_warp"])
+    s12 = _match_mask_size(outputs["seam_12"], outputs["input1_warp"])
+    s32 = _match_mask_size(outputs["seam_32"], outputs["input3_warp"])
 
     l_warp = 0.5 * (
-        overlap_l1_warp_loss(outputs["input1_warp"], outputs["input2_fixed"], outputs["overlap_12"])
-        + overlap_l1_warp_loss(outputs["input3_warp"], outputs["input2_fixed"], outputs["overlap_32"])
+        overlap_l1_warp_loss(outputs["input1_warp"], outputs["input2_fixed"], o12)
+        + overlap_l1_warp_loss(outputs["input3_warp"], outputs["input2_fixed"], o32)
     )
     l_edge = 0.5 * (grid_edge_length_loss(outputs["control_disp_12"]) + grid_edge_length_loss(outputs["control_disp_32"]))
     l_angle = 0.5 * (grid_angle_loss(outputs["control_disp_12"]) + grid_angle_loss(outputs["control_disp_32"]))
@@ -124,17 +137,17 @@ def compute_three_view_total_loss(
     )
 
     l_boundary = 0.5 * (
-        seam_overlap_boundary_loss(outputs["seam_12"], outputs["overlap_12"])
-        + seam_overlap_boundary_loss(outputs["seam_32"], outputs["overlap_32"])
+        seam_overlap_boundary_loss(s12, o12)
+        + seam_overlap_boundary_loss(s32, o32)
     )
     l_seam_cost = 0.5 * (
-        seam_cost_loss(outputs["input1_warp"], outputs["input2_fixed"], outputs["seam_12"])
-        + seam_cost_loss(outputs["input3_warp"], outputs["input2_fixed"], outputs["seam_32"])
+        seam_cost_loss(outputs["input1_warp"], outputs["input2_fixed"], s12)
+        + seam_cost_loss(outputs["input3_warp"], outputs["input2_fixed"], s32)
     )
     l_smooth = fusion_smoothness_loss(outputs["stitched"])
     l_nipple_fus = nipple_heatmap_alignment_loss(outputs["stitched"], outputs["input2_fixed"], x2, x2)
     l_fixed_consistency = F.l1_loss(outputs["input2_fixed_12"], outputs["input2_fixed_32"])
-    l_cross13_warp = overlap_l1_warp_loss(outputs["input1_warp"], outputs["input3_warp"], outputs["overlap_13"])
+    l_cross13_warp = overlap_l1_warp_loss(outputs["input1_warp"], outputs["input3_warp"], o13)
     l_cross13_nipple = nipple_heatmap_alignment_loss(outputs["input1_warp"], outputs["input3_warp"], x1, x3)
 
     total = (
