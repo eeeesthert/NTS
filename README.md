@@ -28,3 +28,20 @@ python train_three_view.py \
 
 - `abus_pairwise/three_view_pipeline.py`
 - `abus_pairwise/datasets.py` 中的 `ABUSThreeViewDataset`
+
+### 推理与指标导出（MSE/PSNR/SSIM/NCC）
+
+```bash
+python infer_three_view.py \
+  --dataset-root ./dataset/infer \
+  --pairwise-checkpoint ./outputs_1/shared_model.pt \
+  --checkpoint ./outputs_1/three_view_model.pt \
+  --out-dir ./infer_outputs_3view \
+  --metrics-csv ./infer_outputs_3view/metrics.csv
+```
+
+`metrics.csv` 会输出：
+- `reg12_*`：`input1_warp` vs `input2_fixed`（重叠区）
+- `reg23_*`：`input3_warp` vs `input2_fixed`（重叠区）
+- `reg13_*`：`input1_warp` vs `input3_warp`（重叠区）
+- `fus_fixed_*`：`stitched` vs `input2_fixed`（fixed 有效区）
